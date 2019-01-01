@@ -54,6 +54,7 @@ class Arbiter(object):
         os.environ["SERVER_SOFTWARE"] = SERVER_SOFTWARE
 
         self._num_workers = None
+        self._worker_index = {}
         self._last_logged_active_worker_count = None
         self.log = None
 
@@ -85,6 +86,8 @@ class Arbiter(object):
         old_value = self._num_workers
         self._num_workers = value
         self.cfg.nworkers_changed(self, value, old_value)
+        for i in range(self._num_workers):
+            self._worker_index.setdefault(i, None)
     num_workers = property(_get_num_workers, _set_num_workers)
 
     def setup(self, app):
@@ -550,6 +553,10 @@ class Arbiter(object):
             (pid, _) = workers.pop(0)
             self.kill_worker(pid, signal.SIGTERM)
 
+            self._worker_index = {
+                k: v for k, v in self._worker_index.items() if v != pid
+            }
+
         active_worker_count = len(workers)
         if self._last_logged_active_worker_count != active_worker_count:
             self._last_logged_active_worker_count = active_worker_count
@@ -576,8 +583,12 @@ class Arbiter(object):
 
         # Process Child
         worker.pid = os.getpid()
+        w_index = next(
+            (k for k, v in self._worker_index.items() if v is None), 0,
+        ) + 1
+        self._worker_index[w_index] = worker.pid
         try:
-            util._setproctitle("worker [%s]" % self.proc_name)
+            util._setproctitle("worker-%d [%s]" % (w_index, self.proc_name))
             self.log.info("Booting worker with pid: %s", worker.pid)
             self.cfg.post_fork(self, worker)
             worker.init_process()
